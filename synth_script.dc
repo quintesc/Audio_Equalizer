@@ -1,0 +1,86 @@
+###########################################
+# Read in verilog and establish top level #
+###########################################
+read_file -format sverilog {Equalizer.sv rst_synch.sv slide_intf.sv bt_intf.sv \
+I2S_Serf.sv EQ_engine.sv spkr_drv.sv A2D_intf.sv snd_cmd.sv PB_release.sv \
+high_freq_queue.sv low_freq_queue.sv FIR_LP.sv FIR_B1.sv FIR_B2.sv FIR_B3.sv FIR_HP.sv \
+band_scale.sv PDM.sv \
+SPI_mnrch.sv cmdROM.v UART.sv dualPort1536x16.v dualPort1024x16.v \
+ROM_LP.v ROM_B1.v ROM_B2.v ROM_B3.v ROM_HP.v LED_drv.sv}
+set current_design Equalizer
+link
+
+#####################################
+# Constrain and assign clock 		#
+# 333MHz frequency -> period = 3 ns #
+# Clock uncertainyty = 0.125ns	    #
+# Set don't touch to rst_n			#
+#####################################
+create_clock -name "clk" -period 3  clk
+set_dont_touch_network [find port clk]
+set_clock_uncertainty 0.125 clk
+set_dont_touch_network [get_net iRST/rst_n]
+
+#################################################
+# Don't want synopsis to analyze our memories	#
+# filter memories for weights					#
+# filter memories for circular queue			#
+# UART rom										#
+#################################################
+set_dont_touch [find design ROM*]
+set_dont_touch [find design dualPort*]
+set_dont_touch [find design cmdROM]
+
+#####################################################################
+# Constrain input timings and Drive strength 						#
+# input delays of 0.75 ns on all inputs other than clock 			#
+# drive strength of NAND2X1_LVT for all inputs except clk and rst_n #
+#####################################################################
+set prim_inputs [remove_from_collection [all_inputs] [find port clk]]
+set_input_delay -clock clk 0.75 $prim_inputs
+set_driving_cell -lib_cell NAND2X1_LVT -library\
+		     saed32lvt_tt0p85v25c $prim_inputs
+set_drive 0.1 rst_n
+			 
+###########################################
+# Constrain output timings and load 	  #
+# 0.75ns delay on all outputS             #
+# 50fF load on all outputs				  #
+###########################################
+set_output_delay -clock clk 0.75 [all_outputs]
+set_load 50 [all_outputs]
+
+#############################################################
+# Set wireload & transition time 							#
+# 0.125ns max transition on all nodes 						#
+# 32nm wire load model for a block of size 16000 sq microns #
+#############################################################
+set_wire_load_model -name 16000 -library saed32lvt_tt0p85v25c
+set_max_transition 0.125 [current_design]
+
+########################################
+# Compiles then flattens hierarchy 	   #
+########################################
+compile -map_effort high -area_effort high
+set_fix_hold clk
+ungroup -all -flatten
+
+####################
+# 2nd Compile	   #
+####################
+compile -map_effort medium -area_effort medium
+
+##############################
+# Produces:					 #
+#			min_delay report #
+#			max_delay report #
+#			area report		 #
+##############################
+report_timing -delay min -nworst 1
+report_timing -delay max -nworst 1
+report_area > Equalizer_area.txt
+
+################################################
+# Write out resulting synthesized netlist 	   #
+################################################
+write -format verilog Equalizer -output Equalizer.vg
